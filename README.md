@@ -1,6 +1,7 @@
 # nba_games_data
 
 ## Install libraries
+The following libraries are required to run this dashboard:
 
 ```install.packages(c('ggplot2','dplyr','shiny','shinydashboard'))```
 
