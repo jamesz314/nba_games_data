@@ -9,4 +9,4 @@ To run this program, run the following code:
 
 ```library(shiny)```
 
-```runGitHub("nba_games_data", "jamsez314")```
+```runGitHub("nba_games_data", "jamesz314")```
