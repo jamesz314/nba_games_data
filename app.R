@@ -1,0 +1,498 @@
+##### libraries
+library(ggplot2) # data visualization
+#library(magrittr) # pipe operator
+library(dplyr) # manipulate data
+#library(GGally) # ggpairs()
+#library(plotly) # ggpairs()
+
+# Make dashboard
+library(shiny)
+library(shinydashboard)
+
+##### read and manipulate data
+games = read.csv('archive/games.csv')
+games_detail = read.csv('archive/games_details.csv')
+# players = read.csv('archive/players.csv')
+# ranking = read.csv('archive/ranking.csv')
+teams = read.csv('archive/teams.csv')
+
+# adjust some errors in the data
+player_id_name = games_detail %>%
+  select(PLAYER_ID, PLAYER_NAME) %>%
+  unique()
+
+dup_id_table = data.frame(table(player_id_name$PLAYER_ID))
+
+# check which IDs have more than one names (name change, nicknames)
+test = player_id_name[player_id_name$PLAYER_ID %in%
+                        dup_id_table[dup_id_table$Freq > 1,]$Var1, ]
+
+# change name so every ID has a singular name
+change_name = c(
+  "Nicolas Claxton"=1629651,
+  "Charlie Brown Jr."=1629718,
+  "Enes Freedom"=202683,
+  "P.J. Dozier"=1628408,
+  "T.J. Leaf"=1628388
+)
+
+for (i in seq(1, length(change_name))){
+  id = change_name[i]
+  player_name = names(id)
+  games_detail$PLAYER_NAME = replace(games_detail$PLAYER_NAME, 
+                                     games_detail$PLAYER_ID==id, 
+                                     player_name)
+}
+
+# add SEASON to games_detail
+game_season = games %>%
+  select(GAME_ID ,SEASON) %>%
+  right_join(games_detail, by=c("GAME_ID"))
+
+# list of seasons
+seasons = sort((game_season %>% select(SEASON) %>% unique())$SEASON)
+
+# df: team name, team id
+teams_name_id = c()
+for (i in seq(1, dim(teams)[1])){
+  teams_name_id[paste(teams$CITY[i], teams$NICKNAME[i])] <- teams$TEAM_ID[i]
+}
+
+# df: shooting stats per season for teams
+shooting_df = game_season %>%
+  group_by(SEASON, TEAM_ID) %>%
+  summarise(FGM = sum(FGM, na.rm=TRUE),
+            FGA = sum(FGA, na.rm=TRUE),
+            FG_PCT = FGM / FGA,
+            FG3M = sum(FG3M, na.rm=TRUE),
+            FG3A = sum(FG3A, na.rm=TRUE),
+            FG3_PCT = FG3M / FG3A,
+            FG3_AMT = FG3A / FGA)
+
+ui = dashboardPage(
+  skin="blue",
+  dashboardHeader(title = "NBA games data"),
+  dashboardSidebar(
+    sidebarMenu(
+      id="menu1", #Creates a menu of tab names
+      menuItem("Introduction", tabName="tabIntro", icon=icon("camera")),
+      menuItem("General Trends", tabName="tab1", icon=icon("chart-line")),
+      menuItem("Player Stats", tabName="tab2", icon=icon("dove"))
+    ),
+    #tab1
+    conditionalPanel(condition = "input.menu1=='tab1'", 
+                     tags$hr(), #horizontal rule, i.e. line
+                     #h4("Controls"),
+                     p("Pick a statistic to see the general trend for it"),
+                     radioButtons(
+                       inputId = "stats",
+                       label = "Counting Stats",
+                       choices = c("Points", "Rebounds", "Assists"),
+                       selected = c("Points")
+                     ),
+                     tags$hr(),
+                     p("Pick a team that you want to check for"),
+                     selectInput(
+                       inputId = "team",
+                       label = "Team",
+                       choices = sort(names(teams_name_id))
+                       #selected = c("Minnesota")
+                     ),
+                     tags$hr(),
+                     p("Pick a scoring efficiency stat to see the general trend for it"),
+                     radioButtons(
+                       inputId = "shooting",
+                       label = "Scoring Efficiency",
+                       choices = c("Shooting Percentage", "3PT Shooting Percentage", "Percentage of shots that are 3PTs"),
+                       selected = c("Percentage of shots that are 3PTs")
+                     )
+    ),
+    #tab2
+    conditionalPanel(
+      condition = "input.menu1=='tab2'",
+      tags$hr(),
+      p("Choose a season"),
+      selectInput(
+        inputId = "season",
+        label = "Season (The year the season started)",
+        choices = seasons,
+        selected = c("2018")
+      ),
+      p("Choose the players (only players who played in the chosen season will be listed)"),
+      uiOutput("season_player1"),
+      uiOutput("season_player2"),
+      p("Pick a statistic that you want to check for the players"),
+      selectInput(
+        inputId = "stats2",
+        label = "Statistic",
+        choices = c("Points", "Rebounds", "Assists", 
+                    "Shooting Percentage", "3PT Shooting Percentage",
+                    "Percentage of shots that are 3PTs"),
+        selected = c("Points")
+      )
+    )
+  ),
+  dashboardBody(
+    tabItems(
+      #tabIntro
+      tabItem(tabName="tabIntro",
+              h2("Visualization for NBA games data", align="center"),
+              h4("James Zhang", align="center"),
+              h4("December 12th", align="center"),
+              h2(""),
+              h3("Introduction"),
+              h4("This data set contains all the NBA games from 2003-2004 season to the 2020-2021 season, and some from the 2021-2022 season. This includes both the regular season and playoff games. The data set is retrieved from the Kaggle data set 'NBA games data'."),
+              h3(""),
+              h4("It's easy to access NBA stats on the internet, however many sites that you will find online only show the numbers with no visualizations. The following pictures show what a search on the NBA official website and basketball-reference (another commonly used site for NBA stats collection) look like."),
+              fluidRow(mainPanel(imageOutput("pic1"))),
+              fluidRow(mainPanel(imageOutput("pic2"))),
+              h4("If you wanted to see who's scoring the most, or if you wanted a specific stat such as your favourite player's career average, then the cites may be sufficient enough. However, some visualizations may help fans to see some other things that they are interested in, such as the scoring trend of the league over the past 15 years."),
+              h3(""),
+              h4("The purpose of this dashboard is to create some visualizations of the NBA games data. General trends are shown for how the NBA progressed in the past 20 years, including counting stats like points, rebounds, assists per game and other stats like the shooting percentages for teams. The results are shown over each season and shown for the league as a whole and for each individual team. The counting stats are also broken down into the performances at home versus the performances away. Aside from trends, tables and plots were also displayed to compare two players, given that they both played under the same season. This includes comparing the two players career stats, as well as a season-by-season comparsion for the major statistics.")
+      ),
+      #tab1
+      tabItem(tabName="tab1",
+              h2("Trends for Counting Stats"),
+              fluidRow(
+                box(width=12, plotOutput("trend", height=250)),
+                box(width=12, plotOutput("trend2", height=250))),
+              h2("Other trends"),
+              fluidRow(
+                box(width=11, plotOutput("trend3", height=250)),
+                box(width=11, plotOutput("trend4", height=250))
+              )
+      ),
+      #Tab2
+      tabItem(tabName="tab2",
+              h2("Player Career Comparsion"),
+              fluidRow(
+                box(width=12, tableOutput("compare"), align="center")
+              ),
+              fluidRow(
+                box(width=12, plotOutput("bar1", height=250))
+              ),
+              fluidRow(
+                box(width=12, plotOutput("bar2", height=250))
+              ),
+              h2("Player Season-by-Season Comparsion"),
+              fluidRow(
+                box(width=12, plotOutput("p1", height=250))
+              ))
+    )
+  )
+)
+
+############
+server = function(input, output){
+  output$pic1 = renderImage({
+    filename = paste('pictures/nba stats.png')
+    list(src = filename, width=600, height=300, alt = paste("NBA official website"))
+  }, deleteFile = FALSE)
+  output$pic2 = renderImage({
+    filename = paste('pictures/bball ref.png')
+    list(src = filename, width=600, height=300, alt = paste("basketball-reference"))
+  }, deleteFile = FALSE)
+  
+  output$trend = renderPlot({
+    df_home = games %>% 
+      group_by(SEASON)
+    df_away = games %>% 
+      group_by(SEASON)
+    df_home$team <- "home"
+    df_away$team <- "away"
+    
+    df_home.subset = reactive({
+      if(input$stats == "Points"){
+        a = df_home %>%
+          summarise(id=TEAM_ID_home, avg = (mean(PTS_home, na.rm=TRUE)), team=team)
+      } else if(input$stats == "Rebounds"){
+        a = df_home %>%
+          summarise(id=TEAM_ID_home, avg = (mean(REB_home, na.rm=TRUE)), team=team)
+      } else if(input$stats == "Assists"){
+        a = df_home %>%
+          summarise(id=TEAM_ID_home, avg = (mean(AST_home, na.rm=TRUE)), team=team)
+      }
+      return(a)
+    })
+    df_away.subset = reactive({
+      if(input$stats == "Points"){
+        a = df_away %>%
+          summarise(id=TEAM_ID_away, avg = (mean(PTS_away, na.rm=TRUE)), team=team)
+      } else if(input$stats == "Rebounds"){
+        a = df_away %>%
+          summarise(id=TEAM_ID_away, avg = (mean(REB_away, na.rm=TRUE)), team=team)
+      } else if(input$stats == "Assists"){
+        a = df_away %>%
+          summarise(id=TEAM_ID_away, avg = (mean(AST_away, na.rm=TRUE)), team=team)
+      }
+      return(a)
+    })
+    df_full = df_home.subset() %>% rbind(df_away.subset())
+    ggplot() + 
+      geom_line(data=df_full, mapping=aes(x=SEASON, y=avg, col=team)) +
+      geom_point(data=df_full, mapping=aes(x=SEASON, y=avg)) +
+      labs(title=paste("All teams"), y=paste("Average ", input$stats)) +
+      theme(plot.title = element_text(hjust = 0.5))
+  })
+  
+  output$trend2 = renderPlot({
+    df_home = games %>% 
+      filter(TEAM_ID_home==as.integer(teams_name_id[input$team])) %>% 
+      group_by(SEASON)
+    df_away = games %>% 
+      filter(TEAM_ID_away==as.integer(teams_name_id[input$team])) %>% 
+      group_by(SEASON)
+    df_home$team <- "home"
+    df_away$team <- "away"
+    
+    df_home.subset = reactive({
+      if(input$stats == "Points"){
+        a = df_home %>%
+          summarise(id=TEAM_ID_home, avg = (mean(PTS_home, na.rm=TRUE)), team=team)
+      } else if(input$stats == "Rebounds"){
+        a = df_home %>%
+          summarise(id=TEAM_ID_home, avg = (mean(REB_home, na.rm=TRUE)), team=team)
+      } else if(input$stats == "Assists"){
+        a = df_home %>%
+          summarise(id=TEAM_ID_home, avg = (mean(AST_home, na.rm=TRUE)), team=team)
+      }
+      return(a)
+    })
+    df_away.subset = reactive({
+      if(input$stats == "Points"){
+        a = df_away %>%
+          summarise(id=TEAM_ID_away, avg = (mean(PTS_away, na.rm=TRUE)), team=team)
+      } else if(input$stats == "Rebounds"){
+        a = df_away %>%
+          summarise(id=TEAM_ID_away, avg = (mean(REB_away, na.rm=TRUE)), team=team)
+      } else if(input$stats == "Assists"){
+        a = df_away %>%
+          summarise(id=TEAM_ID_away, avg = (mean(AST_away, na.rm=TRUE)), team=team)
+      }
+      return(a)
+    })
+    df_full = df_home.subset() %>% rbind(df_away.subset())
+    ggplot() + 
+      geom_line(data=df_full, mapping=aes(x=SEASON, y=avg, col=team)) +
+      geom_point(data=df_full, mapping=aes(x=SEASON, y=avg)) +
+      labs(title=paste(input$team), y=paste("Average ", input$stats)) +
+      theme(plot.title = element_text(hjust = 0.5))
+  })
+  output$trend3 = renderPlot({
+    df = shooting_df %>%
+      group_by(SEASON)
+    df.subset = reactive({
+      if(input$shooting == "Shooting Percentage"){
+        a = df %>%
+          summarise(FGM = sum(FGM), FGA = sum(FGA), avg = FGM/FGA)
+      } else if(input$shooting == "3PT Shooting Percentage"){
+        a = df %>%
+          summarise(FG3M = sum(FG3M), FG3A = sum(FG3A), avg = FG3M/FG3A)
+      } else if(input$shooting == "Percentage of shots that are 3PTs"){
+        a = df %>%
+          summarise(FG3A = sum(FG3A), FGA = sum(FGA), avg = FG3A/FGA)
+      }
+      return(a)
+    })
+    ggplot() + 
+      geom_line(data=df.subset(), mapping=aes(x=SEASON, y=avg), color="blue") +
+      geom_point(data=df.subset(), mapping=aes(x=SEASON, y=avg)) +
+      labs(title=paste("All teams"), y=paste(input$shooting)) +
+      theme(plot.title = element_text(hjust = 0.5))
+  })
+  output$trend4 = renderPlot({
+    df = shooting_df %>% 
+      filter(TEAM_ID==as.integer(teams_name_id[input$team]))
+    df.subset = reactive({
+      if(input$shooting == "Shooting Percentage"){
+        a = df %>%
+          rename(avg = FG_PCT)
+      } else if(input$shooting == "3PT Shooting Percentage"){
+        a = df %>%
+          rename(avg = FG3_PCT)
+      } else if(input$shooting == "Percentage of shots that are 3PTs"){
+        a = df %>%
+          rename(avg = FG3_AMT)
+      }
+      return(a)
+    })
+    ggplot() + 
+      geom_line(data=df.subset(), mapping=aes(x=SEASON, y=avg), color="blue") +
+      geom_point(data=df.subset(), mapping=aes(x=SEASON, y=avg)) +
+      labs(title=paste(input$team), y=paste(input$shooting)) +
+      theme(plot.title = element_text(hjust = 0.5))
+  })
+  output$season_player1 = renderUI({
+    season = input$season
+    players = game_season %>%
+      filter(SEASON==season) %>%
+      select(PLAYER_ID, PLAYER_NAME) %>%
+      unique()
+    selectInput(
+      inputId = "player1",
+      label = "Player1",
+      choices = sort(players$PLAYER_NAME),
+      selected = c("Stephen Curry")
+    )
+  })
+  output$season_player2 = renderUI({
+    season = input$season
+    players = game_season %>%
+      filter(SEASON==season) %>%
+      select(PLAYER_ID, PLAYER_NAME) %>%
+      unique()
+    selectInput(
+      inputId = "player2",
+      label = "Player2",
+      choices = sort(players$PLAYER_NAME),
+      selected = c("Kyle Lowry")
+    )
+  })
+  output$compare = renderTable({
+    df1 = games_detail %>%
+      filter(PLAYER_NAME==input$player1) %>%
+      summarise(Points=(mean(PTS, na.rm=TRUE)),
+                Rebounds=(mean(REB, na.rm=TRUE)),
+                Assists=(mean(AST, na.rm=TRUE)),
+                Shooting_Percentage=(sum(FGM, na.rm=TRUE) / sum(FGA, na.rm=TRUE)),
+                Three_Point_Shooting_Percentage=(sum(FG3M, na.rm=TRUE) / sum(FG3A, na.rm=TRUE)),
+                Percentage_of_Shots_that_are_3PT=sum(FG3A, na.rm=TRUE) / sum(FGA, na.rm=TRUE))
+    df2 = games_detail %>%
+      filter(PLAYER_NAME==input$player2) %>%
+      summarise(Points=(mean(PTS, na.rm=TRUE)),
+                Rebounds=(mean(REB, na.rm=TRUE)),
+                Assists=(mean(AST, na.rm=TRUE)),
+                Shooting_Percentage=(sum(FGM, na.rm=TRUE) / sum(FGA, na.rm=TRUE)),
+                Three_Point_Shooting_Percentage=(sum(FG3M, na.rm=TRUE) / sum(FG3A, na.rm=TRUE)),
+                Percentage_of_Shots_that_are_3PT=sum(FG3A, na.rm=TRUE) / sum(FGA, na.rm=TRUE))
+    df = t(rbind(df1, df2))
+    colnames(df) = c(input$player1, input$player2)
+    rownames(df) = c("Points","Rebounds","Assists","Shooting Percentage",
+                     "3PT Shooting Percentage",
+                     "Percentage of Shots that are 3PTs")
+    df
+    
+  }, rownames=TRUE)
+  
+  #bar1
+  output$bar1 = renderPlot({
+    df1 = games_detail %>%
+      filter(PLAYER_NAME==input$player1) %>%
+      summarise(Points=(mean(PTS, na.rm=TRUE)),
+                Rebounds=(mean(REB, na.rm=TRUE)),
+                Assists=(mean(AST, na.rm=TRUE)))
+    df2 = games_detail %>%
+      filter(PLAYER_NAME==input$player2) %>%
+      summarise(Points=(mean(PTS, na.rm=TRUE)),
+                Rebounds=(mean(REB, na.rm=TRUE)),
+                Assists=(mean(AST, na.rm=TRUE)))
+    PlayerName = c(rep(input$player1, 3), rep(input$player2, 3))
+    order = c("Points","Rebounds","Assists")
+    Stats1 = rep(order, 2)
+    value = c(df1["1","Points"],
+              df1["1","Rebounds"],
+              df1["1","Assists"],
+              df2["1","Points"],
+              df2["1","Rebounds"],
+              df2["1","Assists"])
+    df = data.frame(PlayerName, Stats1, value)
+    ggplot(df, aes(fill=PlayerName, x=Stats1, y=value)) + 
+      geom_bar(position="dodge", stat="identity") +
+      labs(x="Stats", y="value") +
+      scale_x_discrete(limits=order)
+  })
+  
+  #bar2
+  output$bar2 = renderPlot({
+    df1 = games_detail %>%
+      filter(PLAYER_NAME==input$player1) %>%
+      summarise(Shooting_Percentage=(sum(FGM, na.rm=TRUE) / sum(FGA, na.rm=TRUE)),
+                Three_Point_Shooting_Percentage=(sum(FG3M, na.rm=TRUE) / sum(FG3A, na.rm=TRUE)),
+                Percentage_of_Shots_that_are_3PT=sum(FG3A, na.rm=TRUE) / sum(FGA, na.rm=TRUE))
+    df2 = games_detail %>%
+      filter(PLAYER_NAME==input$player2) %>%
+      summarise(Shooting_Percentage=(sum(FGM, na.rm=TRUE) / sum(FGA, na.rm=TRUE)),
+                Three_Point_Shooting_Percentage=(sum(FG3M, na.rm=TRUE) / sum(FG3A, na.rm=TRUE)),
+                Percentage_of_Shots_that_are_3PT=sum(FG3A, na.rm=TRUE) / sum(FGA, na.rm=TRUE))
+    PlayerName = c(rep(input$player1, 3), rep(input$player2, 3))
+    Stats2 = rep(c("FG_PCT", "FG_3PCT",
+                   "Percentage of shots that are 3PTs"),2)
+    value2 = c(df1["1","Shooting_Percentage"],
+               df1["1","Three_Point_Shooting_Percentage"],
+               df1["1","Percentage_of_Shots_that_are_3PT"],
+               df2["1","Shooting_Percentage"],
+               df2["1","Three_Point_Shooting_Percentage"],
+               df2["1","Percentage_of_Shots_that_are_3PT"])
+    df=data.frame(PlayerName,Stats2,value2)
+    ggplot(df, aes(fill=PlayerName, x=Stats2, y=value2)) + 
+      geom_bar(position="dodge", stat="identity") +
+      labs(x="Stats", y="value")
+  })
+  
+  output$p1 = renderPlot({
+    df1 = game_season %>%
+      filter(PLAYER_NAME==input$player1) %>%
+      group_by(SEASON)
+    df2 = game_season %>%
+      filter(PLAYER_NAME==input$player2) %>%
+      group_by(SEASON)
+    df1.subset = reactive({
+      if(input$stats2 == "Points"){
+        a = df1 %>%
+          summarise(avg = (mean(PTS, na.rm=TRUE)))
+      } else if(input$stats2 == "Rebounds"){
+        a = df1 %>%
+          summarise(avg = (mean(REB, na.rm=TRUE)))
+      } else if(input$stats2 == "Assists"){
+        a = df1 %>%
+          summarise(avg = (mean(AST, na.rm=TRUE)))
+      } else if(input$stats2 == "Shooting Percentage"){
+        a = df1 %>%
+          summarise(FGM = sum(FGM, na.rm=TRUE), FGA = sum(FGA, na.rm=TRUE), avg = FGM/FGA)
+      } else if(input$stats2 == "3PT Shooting Percentage"){
+        a = df1 %>%
+          summarise(FG3M = sum(FG3M, na.rm=TRUE), FG3A = sum(FG3A, na.rm=TRUE), avg = FG3M/FG3A)
+      } else if(input$stats2 == "Percentage of shots that are 3PTs"){
+        a = df1 %>%
+          summarise(FG3A = sum(FG3A, na.rm=TRUE), FGA = sum(FGA, na.rm=TRUE), avg = FG3A/FGA)
+      }
+      return(a)
+    })
+    df2.subset = reactive({
+      if(input$stats2 == "Points"){
+        a = df2 %>%
+          summarise(avg = (mean(PTS, na.rm=TRUE)))
+      } else if(input$stats2 == "Rebounds"){
+        a = df2 %>%
+          summarise(avg = (mean(REB, na.rm=TRUE)))
+      } else if(input$stats2 == "Assists"){
+        a = df2 %>%
+          summarise(avg = (mean(AST, na.rm=TRUE)))
+      } else if(input$stats2 == "Shooting Percentage"){
+        a = df2 %>%
+          summarise(FGM = sum(FGM, na.rm=TRUE), FGA = sum(FGA, na.rm=TRUE), avg = FGM/FGA)
+      } else if(input$stats2 == "3PT Shooting Percentage"){
+        a = df2 %>%
+          summarise(FG3M = sum(FG3M, na.rm=TRUE), FG3A = sum(FG3A, na.rm=TRUE), avg = FG3M/FG3A)
+      } else if(input$stats2 == "Percentage of shots that are 3PTs"){
+        a = df2 %>%
+          summarise(FG3A = sum(FG3A, na.rm=TRUE), FGA = sum(FGA, na.rm=TRUE), avg = FG3A/FGA)
+      }
+      return(a)
+    })
+    ggplot() + 
+      geom_line(data=df1.subset(), mapping=aes(x=SEASON, y=avg), color='blue') +
+      geom_point(data=df1.subset(), mapping=aes(x=SEASON, y=avg)) +
+      geom_line(data=df2.subset(), mapping=aes(x=SEASON, y=avg), color='red') +
+      geom_point(data=df2.subset(), mapping=aes(x=SEASON, y=avg)) +
+      geom_vline(xintercept = as.numeric(input$season)) +
+      labs(title=paste(input$player1, "(blue) vs",input$player2, "(red)"), 
+           y=paste("Average Points")) +
+      theme(plot.title = element_text(hjust = 0.5))
+  })
+}
+
+
+
+############
+shinyApp(ui,server)
